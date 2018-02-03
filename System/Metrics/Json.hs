@@ -18,6 +18,7 @@ import Data.Aeson ((.=))
 import qualified Data.Aeson.Types as A
 import qualified Data.HashMap.Strict as M
 import Data.Int (Int64)
+import Data.Monoid ((<>))
 import qualified Data.Text as T
 import qualified System.Metrics as Metrics
 import qualified System.Metrics.Distribution as Distribution
@@ -27,8 +28,12 @@ import qualified System.Metrics.Distribution as Distribution
 
 
 -- | Encode metrics as nested JSON objects. Each "." in the metric
--- name introduces a new level of nesting. For example, the metrics
--- @[("foo.bar", 10), ("foo.baz", "label")]@ are encoded as
+-- name introduces a new level of nesting. Each dimension introduces a new
+-- level of nesting as well with a magic key. This design simplifies
+-- compatibility with the JavaScript in the main 'ekg' package.
+--
+-- For example, the metrics
+-- @[(("foo.bar",[]), 10), (("foo.baz",[("a","1")]), "label")]@ are encoded as
 --
 -- > {
 -- >   "foo": {
@@ -37,8 +42,10 @@ import qualified System.Metrics.Distribution as Distribution
 -- >       "val": 10
 -- >     },
 -- >     "baz": {
--- >       "type": "l",
--- >       "val": "label"
+-- >       "a=1": {
+-- >         "type": "l",
+-- >         "val": "label"
+-- >       }
 -- >     }
 -- >   }
 -- > }
@@ -47,11 +54,11 @@ sampleToJson :: Metrics.Sample -> A.Value
 sampleToJson metrics =
     buildOne metrics $ A.emptyObject
   where
-    buildOne :: M.HashMap T.Text Metrics.Value -> A.Value -> A.Value
+    buildOne :: M.HashMap (T.Text, [(T.Text, T.Text)]) Metrics.Value -> A.Value -> A.Value
     buildOne m o = M.foldlWithKey' build o m
 
-    build :: A.Value -> T.Text -> Metrics.Value -> A.Value
-    build m name val = go m (T.splitOn "." name) val
+    build :: A.Value -> (T.Text, [(T.Text, T.Text)]) -> Metrics.Value -> A.Value
+    build m (name, dims) val = go m (T.splitOn "." name <> [k <> "=" <> v | (k,v) <- dims]) val
 
     go :: A.Value -> [T.Text] -> Metrics.Value -> A.Value
     go (A.Object m) [str] val      = A.Object $ M.insert str metric m
